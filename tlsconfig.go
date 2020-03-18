@@ -26,7 +26,6 @@ type TLSConfigurator struct {
 // TLSClientConfig returns a tls.Config which will fully validate the
 // server certificate using the provided CaCerts.
 func (c *TLSConfigurator) TLSClientConfig() (*tls.Config, error) {
-
 	caCertPool, err := c.loadServerCertPool()
 	if err != nil {
 		return nil, err
@@ -42,6 +41,9 @@ func (c *TLSConfigurator) TLSClientConfig() (*tls.Config, error) {
 		RootCAs:      caCertPool,
 		Certificates: []tls.Certificate{clientCert},
 	}
+
+	// TODO(jwatson): This was depricated in Go 1.14 and should be removed
+	// at some point in the future
 	tlsConfig.BuildNameToCertificate()
 
 	return tlsConfig, nil
@@ -52,7 +54,6 @@ func (c *TLSConfigurator) TLSClientConfig() (*tls.Config, error) {
 // option tls.RequireAndVerifyClientCert. The client
 // certificate must have x509.ExtKeyUsageClientAuth set.
 func (c *TLSConfigurator) TLSServerConfig() (*tls.Config, error) {
-
 	caCertPool, err := c.loadServerCertPool()
 	if err != nil {
 		return nil, err
@@ -70,6 +71,9 @@ func (c *TLSConfigurator) TLSServerConfig() (*tls.Config, error) {
 		ClientAuth:   tls.RequireAndVerifyClientCert,
 		NextProtos:   []string{"http/1.1"},
 	}
+
+	// TODO(jwatson): This was depricated in Go 1.14 and should be removed
+	// at some point in the future
 	tlsConfig.BuildNameToCertificate()
 
 	return tlsConfig, nil
@@ -83,6 +87,8 @@ func (c *TLSConfigurator) TLSListener(ln net.Listener) (net.Listener, error) {
 	}
 
 	// Wrap in a listener that sets the keep-alive
+	// TODO(jwatson): Go 1.13 added default keep-alive to the listener
+	// Question is how soon should this be removed?
 	kaln := tcpKeepAliveListener{ln.(*net.TCPListener)}
 
 	// Wrap in a TLS listener
@@ -97,7 +103,9 @@ func (c *TLSConfigurator) HTTPSClient() (*http.Client, error) {
 	if err != nil {
 		return nil, err
 	}
+
 	transport := &http.Transport{TLSClientConfig: tlsConfig}
+
 	return &http.Client{Transport: transport}, nil
 }
 
@@ -119,6 +127,7 @@ func (c *TLSConfigurator) loadServerCertPool() (*x509.CertPool, error) {
 	if len(c.CaCerts) == 0 {
 		return nil, nil
 	}
+
 	certPool := x509.NewCertPool()
 
 	for _, cert := range c.CaCerts {
@@ -126,8 +135,10 @@ func (c *TLSConfigurator) loadServerCertPool() (*x509.CertPool, error) {
 		if err != nil {
 			return nil, err
 		}
+
 		certPool.AppendCertsFromPEM(certPEM)
 	}
+
 	return certPool, nil
 }
 
@@ -136,6 +147,7 @@ func (c *TLSConfigurator) loadBytes(cert string) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
+
 	return ioutil.ReadAll(file)
 }
 
@@ -151,7 +163,9 @@ func (ln tcpKeepAliveListener) Accept() (c net.Conn, err error) {
 	if err != nil {
 		return
 	}
+
 	tc.SetKeepAlive(true)
 	tc.SetKeepAlivePeriod(3 * time.Minute)
+
 	return tc, nil
 }

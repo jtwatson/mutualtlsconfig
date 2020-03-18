@@ -12,14 +12,11 @@ import (
 )
 
 func TestConfigurator(t *testing.T) {
-
 	c.Convey("Given a TLSConfigurator", t, func() {
-
 		c.Convey("which is configured for a Client with two CaCerts", func() {
-
 			// Setup client
 			config := &TLSConfigurator{
-				Assets:  AssetsTest,
+				Assets:  http.Dir("testdata"),
 				CaCerts: []string{"serverca.crt", "clientca.crt"},
 				Cert:    "client.crt",
 				Key:     "client.key",
@@ -27,7 +24,7 @@ func TestConfigurator(t *testing.T) {
 
 			tlsConfig, err := config.TLSClientConfig()
 
-			c.Convey("err should be nil", func() {
+			c.Convey("config.TLSClientConfig() should not error", func() {
 				c.So(err, c.ShouldBeNil)
 			})
 
@@ -45,10 +42,9 @@ func TestConfigurator(t *testing.T) {
 		})
 
 		c.Convey("which is configured for a Server with single CaCert", func() {
-
 			// Setup server
 			config := &TLSConfigurator{
-				Assets:  AssetsTest,
+				Assets:  http.Dir("testdata"),
 				CaCerts: []string{"clientca.crt"},
 				Cert:    "server.crt",
 				Key:     "server.key",
@@ -56,7 +52,7 @@ func TestConfigurator(t *testing.T) {
 
 			tlsConfig, err := config.TLSServerConfig()
 
-			c.Convey("err should be nil", func() {
+			c.Convey("config.TLSServerConfig() should not error", func() {
 				c.So(err, c.ShouldBeNil)
 			})
 
@@ -74,10 +70,9 @@ func TestConfigurator(t *testing.T) {
 		})
 
 		c.Convey("which is configured for a Server with a missing cert", func() {
-
 			// Setup server
 			config := &TLSConfigurator{
-				Assets:  AssetsTest,
+				Assets:  http.Dir("testdata"),
 				CaCerts: []string{"clientca.crt"},
 				Cert:    "missing",
 				Key:     "server.key",
@@ -85,11 +80,11 @@ func TestConfigurator(t *testing.T) {
 
 			tlsConfig, err := config.TLSServerConfig()
 
-			c.Convey("err should not be nil", c.FailureHalts, func() {
+			c.Convey("config.TLSServerConfig() should error", c.FailureHalts, func() {
 				c.So(err, c.ShouldNotBeNil)
 
-				c.Convey("err should contain 'file does not exist'", func() {
-					c.So(err.Error(), c.ShouldContainSubstring, "file does not exist")
+				c.Convey("err should contain 'no such file or directory'", func() {
+					c.So(err.Error(), c.ShouldContainSubstring, "no such file or directory")
 				})
 			})
 
@@ -99,10 +94,9 @@ func TestConfigurator(t *testing.T) {
 		})
 
 		c.Convey("which is configured for a Server with a missing key", func() {
-
 			// Setup server
 			config := &TLSConfigurator{
-				Assets:  AssetsTest,
+				Assets:  http.Dir("testdata"),
 				CaCerts: []string{"clientca.crt"},
 				Cert:    "server.crt",
 				Key:     "missing",
@@ -110,11 +104,11 @@ func TestConfigurator(t *testing.T) {
 
 			tlsConfig, err := config.TLSServerConfig()
 
-			c.Convey("err should not be nil", c.FailureHalts, func() {
+			c.Convey("config.TLSServerConfig() should error", c.FailureHalts, func() {
 				c.So(err, c.ShouldNotBeNil)
 
-				c.Convey("err should contain 'file does not exist'", func() {
-					c.So(err.Error(), c.ShouldContainSubstring, "file does not exist")
+				c.Convey("err should contain 'no such file or directory'", func() {
+					c.So(err.Error(), c.ShouldContainSubstring, "no such file or directory")
 				})
 			})
 
@@ -124,10 +118,9 @@ func TestConfigurator(t *testing.T) {
 		})
 
 		c.Convey("which is configured for a Server with a missing caCert", func() {
-
 			// Setup server
 			config := &TLSConfigurator{
-				Assets:  AssetsTest,
+				Assets:  http.Dir("testdata"),
 				CaCerts: []string{"missing"},
 				Cert:    "server.crt",
 				Key:     "server.key",
@@ -135,11 +128,11 @@ func TestConfigurator(t *testing.T) {
 
 			tlsConfig, err := config.TLSServerConfig()
 
-			c.Convey("err should not be nil", c.FailureHalts, func() {
+			c.Convey("config.TLSServerConfig() should error", c.FailureHalts, func() {
 				c.So(err, c.ShouldNotBeNil)
 
-				c.Convey("err should contain 'file does not exist'", func() {
-					c.So(err.Error(), c.ShouldContainSubstring, "file does not exist")
+				c.Convey("err should contain 'no such file or directory'", func() {
+					c.So(err.Error(), c.ShouldContainSubstring, "no such file or directory")
 				})
 			})
 
@@ -149,10 +142,9 @@ func TestConfigurator(t *testing.T) {
 		})
 
 		c.Convey("which is configured for a Client with a missing key", func() {
-
 			// Setup client
 			config := &TLSConfigurator{
-				Assets:  AssetsTest,
+				Assets:  http.Dir("testdata"),
 				CaCerts: []string{"serverca.crt"},
 				Cert:    "client.crt",
 				Key:     "missing",
@@ -160,11 +152,11 @@ func TestConfigurator(t *testing.T) {
 
 			tlsConfig, err := config.TLSClientConfig()
 
-			c.Convey("err should not be nil", c.FailureHalts, func() {
+			c.Convey("config.TLSClientConfig() should error", c.FailureHalts, func() {
 				c.So(err, c.ShouldNotBeNil)
 
-				c.Convey("err should contain 'file does not exist'", func() {
-					c.So(err.Error(), c.ShouldContainSubstring, "file does not exist")
+				c.Convey("err should contain 'no such file or directory'", func() {
+					c.So(err.Error(), c.ShouldContainSubstring, "no such file or directory")
 				})
 			})
 
@@ -174,10 +166,9 @@ func TestConfigurator(t *testing.T) {
 		})
 
 		c.Convey("which is configured for a Client with a missing caCert", func() {
-
 			// Setup client
 			config := &TLSConfigurator{
-				Assets:  AssetsTest,
+				Assets:  http.Dir("testdata"),
 				CaCerts: []string{"missing"},
 				Cert:    "client.crt",
 				Key:     "client.key",
@@ -185,11 +176,11 @@ func TestConfigurator(t *testing.T) {
 
 			tlsConfig, err := config.TLSClientConfig()
 
-			c.Convey("err should not be nil", c.FailureHalts, func() {
+			c.Convey("config.TLSClientConfig() should error", c.FailureHalts, func() {
 				c.So(err, c.ShouldNotBeNil)
 
-				c.Convey("err should contain 'file does not exist'", func() {
-					c.So(err.Error(), c.ShouldContainSubstring, "file does not exist")
+				c.Convey("err should contain 'no such file or directory'", func() {
+					c.So(err.Error(), c.ShouldContainSubstring, "no such file or directory")
 				})
 			})
 
@@ -200,10 +191,9 @@ func TestConfigurator(t *testing.T) {
 	})
 
 	c.Convey("Given a TLSConfigurator for both a Server and Client", t, func() {
-
 		// Setup Client
 		clientConfig := &TLSConfigurator{
-			Assets:  AssetsTest,
+			Assets:  http.Dir("testdata"),
 			CaCerts: []string{"serverca.crt"},
 			Cert:    "client.crt",
 			Key:     "client.key",
@@ -211,14 +201,13 @@ func TestConfigurator(t *testing.T) {
 
 		// Setup Server
 		serverConfig := &TLSConfigurator{
-			Assets:  AssetsTest,
+			Assets:  http.Dir("testdata"),
 			CaCerts: []string{"clientca.crt"},
 			Cert:    "server.crt",
 			Key:     "server.key",
 		}
 
 		c.Convey("We can setup an secure tcp server and client", c.FailureHalts, func() {
-
 			// Setup Server
 			ln, err := net.Listen("tcp", "localhost:0")
 			c.So(err, c.ShouldBeNil)
@@ -236,12 +225,10 @@ func TestConfigurator(t *testing.T) {
 			c.So(err, c.ShouldBeNil)
 
 			c.Convey("The client can connect to the server", func() {
-
 				client, err := tls.Dial("tcp", ln.Addr().String(), tlsClientConfig)
 				c.So(err, c.ShouldBeNil)
 
 				c.Convey("And comunicate", func() {
-
 					go func() {
 						client.Write([]byte("Hello"))
 					}()
@@ -260,7 +247,6 @@ func TestConfigurator(t *testing.T) {
 		})
 
 		c.Convey("We can setup an secure http client/server", c.FailureHalts, func() {
-
 			// Setup Server
 			ln, err := net.Listen("tcp", "localhost:0")
 			c.So(err, c.ShouldBeNil)
@@ -275,7 +261,6 @@ func TestConfigurator(t *testing.T) {
 			}()
 
 			c.Convey("The client can communicate with the server", func() {
-
 				request, err := http.NewRequest("Post", "https://"+ln.Addr().String(), strings.NewReader("Hello"))
 				c.So(err, c.ShouldBeNil)
 
@@ -297,7 +282,6 @@ func TestConfigurator(t *testing.T) {
 			})
 		})
 	})
-
 }
 
 func echoHandler(w http.ResponseWriter, r *http.Request) {
@@ -306,12 +290,10 @@ func echoHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 // We can test that the tcpKeepAliveListener returns a good connection, but there is
-// no API availible test what the keepalive and deepalivepreiod have been set to. So
+// no API available test what the keepalive and deepalivepreiod have been set to. So
 // we do the best that we can.
 func TestTCPKeepAliveListener(t *testing.T) {
-
 	c.Convey("Given a TCPListener wrapped in a tcpKeepAliveListener", t, func() {
-
 		ln, _ := net.Listen("tcp", "127.0.0.1:0")
 		kaln := &tcpKeepAliveListener{ln.(*net.TCPListener)}
 
@@ -326,7 +308,7 @@ func TestTCPKeepAliveListener(t *testing.T) {
 
 			c.So(err, c.ShouldBeNil)
 
-			c.Convey("should recieve without error", func() {
+			c.Convey("should receive without error", func() {
 				v := make([]byte, 5)
 				n, err := conn.Read(v)
 

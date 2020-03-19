@@ -27,18 +27,13 @@ package main
 
 import (
 	"bufio"
-	"crypto/rand"
-	"crypto/rsa"
-	"crypto/x509"
-	"crypto/x509/pkix"
-	"encoding/pem"
 	"fmt"
-	"math/big"
 	"net"
 	"os"
 	"strconv"
 	"strings"
-	"time"
+
+	"github.com/jtwatson/mutualtlsconfig"
 )
 
 func main() {
@@ -50,38 +45,30 @@ func main() {
 
 	input.wait()
 
-	generateCertificate(cert)
+	if err := generateCertificate(cert); err != nil {
+		fmt.Println(err)
+		os.Exit(1)
+	}
 }
 
-func collectInformation(input *input) *x509.Certificate {
+func collectInformation(input *input) *mutualtlsconfig.CertificateInformation {
+	certInfo := &mutualtlsconfig.CertificateInformation{
+		Type: mutualtlsconfig.ServerCertType,
+	}
+
 	fmt.Println()
 	fmt.Println("Specify the certifiate type. This is ether for Server authentication or Client authenticate.")
 	fmt.Println()
 
-	UsageType := input.readOption("Type [Server, Client]", []string{"Client", "Server"})
-
-	extKeyUsage := []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}
-	if UsageType == "Client" {
-		extKeyUsage = []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth}
+	if input.readOption("Type [Server, Client]", []string{"Client", "Server"}) == "Client" {
+		certInfo.Type = mutualtlsconfig.ClientCertType
 	}
 
 	fmt.Println()
 	fmt.Println("Specify the Organization for the certifiate. The Organization can be anything.")
 	fmt.Println()
 
-	organization := input.readString("Organization")
-
-	cert := &x509.Certificate{
-		Subject: pkix.Name{
-			Organization: []string{organization},
-		},
-		NotBefore:             time.Now(),
-		KeyUsage:              x509.KeyUsageCertSign | x509.KeyUsageKeyEncipherment | x509.KeyUsageDigitalSignature,
-		ExtKeyUsage:           extKeyUsage,
-		BasicConstraintsValid: true,
-
-		IsCA: true,
-	}
+	certInfo.Organization = input.readString("Organization")
 
 	fmt.Println()
 	fmt.Println("Specify the Common Name for the certificate. The common name")
@@ -90,9 +77,9 @@ func collectInformation(input *input) *x509.Certificate {
 	fmt.Println("should specify the DNS name here.")
 	fmt.Println()
 
-	cert.Subject.CommonName = input.readString("Common name")
+	certInfo.CommonName = input.readString("Common name")
 
-	if UsageType == "Server" {
+	if certInfo.Type == mutualtlsconfig.ServerCertType {
 		fmt.Println()
 		fmt.Println("The next step is to add any additional DNS names and IP")
 		fmt.Println("addresses that clients may use to connect to the server. If")
@@ -112,9 +99,9 @@ func collectInformation(input *input) *x509.Certificate {
 			}
 
 			if ip := net.ParseIP(val); ip != nil {
-				cert.IPAddresses = append(cert.IPAddresses, ip)
+				certInfo.IPAddresses = append(certInfo.IPAddresses, ip)
 			} else {
-				cert.DNSNames = append(cert.DNSNames, val)
+				certInfo.DNSNames = append(certInfo.DNSNames, val)
 			}
 		}
 	}
@@ -125,99 +112,78 @@ func collectInformation(input *input) *x509.Certificate {
 	fmt.Println("within a year or the certificate will cease working.")
 	fmt.Println()
 
-	cert.NotAfter = cert.NotBefore.Add(time.Duration(input.readNumber("Number of days")) * time.Hour * 24)
+	certInfo.Days = int(input.readNumber("Number of days"))
 
-	fmt.Println("Common name:", cert.Subject.CommonName)
+	fmt.Println("Common name:", certInfo.CommonName)
 	fmt.Println("DNS SANs:")
 
-	if len(cert.DNSNames) == 0 {
+	if len(certInfo.DNSNames) == 0 {
 		fmt.Println("    None")
 	} else {
-		for _, e := range cert.DNSNames {
+		for _, e := range certInfo.DNSNames {
 			fmt.Println("   ", e)
 		}
 	}
 
 	fmt.Println("IP SANs:")
 
-	if len(cert.IPAddresses) == 0 {
+	if len(certInfo.IPAddresses) == 0 {
 		fmt.Println("    None")
 	} else {
-		for _, e := range cert.IPAddresses {
+		for _, e := range certInfo.IPAddresses {
 			fmt.Println("   ", e)
 		}
 	}
 
 	fmt.Println()
 
-	return cert
+	return certInfo
 }
 
-func generateCertificate(cert *x509.Certificate) {
-	priv, err := rsa.GenerateKey(rand.Reader, 2048)
+func generateCertificate(certInfo *mutualtlsconfig.CertificateInformation) error {
+	cert, key, err := certInfo.Generate()
 	if err != nil {
-		fmt.Println("Failed to generate private key:", err)
-		os.Exit(1)
-	}
-
-	serialNumberLimit := new(big.Int).Lsh(big.NewInt(1), 128)
-	cert.SerialNumber, err = rand.Int(rand.Reader, serialNumberLimit)
-
-	if err != nil {
-		fmt.Println("Failed to generate serial number:", err)
-		os.Exit(1)
-	}
-
-	derBytes, err := x509.CreateCertificate(rand.Reader, cert, cert, &priv.PublicKey, priv)
-	if err != nil {
-		fmt.Println("Failed to create certificate:", err)
-		os.Exit(1)
+		return err
 	}
 
 	filename := "client"
-	if cert.ExtKeyUsage[0] == x509.ExtKeyUsageServerAuth {
+	if certInfo.Type == mutualtlsconfig.ServerCertType {
 		filename = "server"
 	}
 
 	certOut, err := os.Create(filename + ".crt")
 	if err != nil {
-		fmt.Println("Failed to open file for writing:", err)
-		os.Exit(1)
+		return fmt.Errorf("failed to open certificate file for writing: %w", err)
 	}
 
-	b := &pem.Block{
-		Type:  "CERTIFICATE",
-		Bytes: derBytes,
-	}
-	if err := pem.Encode(certOut, b); err != nil {
-		fmt.Println("Failed encode certificate:", err)
-		os.Exit(1)
+	if _, err := certOut.Write(cert); err != nil {
+		return fmt.Errorf("failed write certificate to file: %w", err)
 	}
 
-	certOut.Close()
+	if err := certOut.Close(); err != nil {
+		return fmt.Errorf("failed closing certificate file: %w", err)
+	}
 
 	keyOut, err := os.OpenFile(filename+".key", os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600)
 	if err != nil {
-		fmt.Println("failed to open file for writing:", err)
-		os.Exit(1)
+		return fmt.Errorf("failed to open key file for writing: %w", err)
 	}
 
-	b = &pem.Block{
-		Type:  "RSA PRIVATE KEY",
-		Bytes: x509.MarshalPKCS1PrivateKey(priv),
-	}
-	if err := pem.Encode(keyOut, b); err != nil {
-		fmt.Println("Failed encode certificate:", err)
-		os.Exit(1)
+	if _, err := keyOut.Write(key); err != nil {
+		return fmt.Errorf("failed write key to file: %w", err)
 	}
 
-	keyOut.Close()
+	if err := keyOut.Close(); err != nil {
+		return fmt.Errorf("failed closing key file: %w", err)
+	}
 
 	fmt.Println()
 	fmt.Println("You may inspect the content of the certificate with something like this:")
 	fmt.Println()
 	fmt.Printf("openssl x509 -in %s.crt -text\n", filename)
 	fmt.Println()
+
+	return nil
 }
 
 type input struct {

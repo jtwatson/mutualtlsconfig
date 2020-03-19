@@ -11,6 +11,10 @@ import (
 	"net"
 	"net/http"
 	"path/filepath"
+	"runtime"
+	"strings"
+
+	"github.com/hashicorp/go-version"
 )
 
 // TLSConfigurator is a utility to simplify setting up a Client/Server
@@ -74,9 +78,9 @@ func (c *TLSConfigurator) TLSClientConfig() *tls.Config {
 		Certificates: c.clientCerts,
 	}
 
-	// TODO(jwatson): This was depricated in Go 1.14 and should be removed
-	// at some point in the future
-	tlsConfig.BuildNameToCertificate()
+	if beforeGo114(runtime.Version()) {
+		tlsConfig.BuildNameToCertificate()
+	}
 
 	return tlsConfig
 }
@@ -94,9 +98,9 @@ func (c *TLSConfigurator) TLSServerConfig() *tls.Config {
 		NextProtos:   []string{"http/1.1"},
 	}
 
-	// TODO(jwatson): This was depricated in Go 1.14 and should be removed
-	// at some point in the future
-	tlsConfig.BuildNameToCertificate()
+	if beforeGo114(runtime.Version()) {
+		tlsConfig.BuildNameToCertificate()
+	}
 
 	return tlsConfig
 }
@@ -137,4 +141,18 @@ func loadBytes(fs http.FileSystem, cert string) ([]byte, error) {
 	}
 
 	return ioutil.ReadAll(file)
+}
+
+func beforeGo114(ver string) bool {
+	minversion, err := version.NewVersion("1.14")
+	if err != nil {
+		return true
+	}
+
+	curversion, err := version.NewVersion(strings.TrimPrefix(ver, "go"))
+	if err != nil {
+		return true
+	}
+
+	return curversion.LessThan(minversion)
 }

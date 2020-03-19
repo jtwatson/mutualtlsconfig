@@ -18,6 +18,9 @@ issues:
       linters:
         - funlen
         - errcheck
+        - lll
+        - gocognit
+        - gocyclo
 
     - linters:
         - godox

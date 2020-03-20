@@ -3,228 +3,270 @@ package mutualtlsconfig
 import (
 	"crypto/tls"
 	"io"
+	"io/ioutil"
 	"net"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
-
-	c "github.com/smartystreets/goconvey/convey"
+	"time"
 )
 
 func TestConfigurator(t *testing.T) {
+	tmpDir, err := ioutil.TempDir("", "mutualtlsconfig")
+	if err != nil {
+		t.Fatalf("Should have created a temp directory, but received error: %s", err)
+	}
 
-	c.Convey("Given a TLSConfigurator", t, func() {
+	defer os.RemoveAll(tmpDir)
 
-		c.Convey("which is configured for a Client with two CaCerts", func() {
+	clientCertInfo := &CertificateInformation{
+		Type:         ClientCertType,
+		Days:         365,
+		Organization: "Organization",
+		CommonName:   "CommonName",
+	}
 
+	serverCertInfo := &CertificateInformation{
+		Type:         ServerCertType,
+		Begin:        time.Now(),
+		Days:         365,
+		Organization: "Organization",
+		CommonName:   "CommonName",
+		DNSNames:     []string{"localhost"},
+		IPAddresses:  []net.IP{net.ParseIP("127.0.0.1")},
+	}
+
+	ccert, ckey, err := clientCertInfo.Generate()
+	if err != nil {
+		t.Fatalf("clientCertInfo.Generate() should not error, but received: %s", err)
+	}
+
+	if err := ioutil.WriteFile(filepath.Join(tmpDir, "client.crt"), ccert, 0700); err != nil {
+		t.Fatalf("ioutil.WriteFile() should not error for client.crt, but received: %s", err)
+	}
+
+	if err := ioutil.WriteFile(filepath.Join(tmpDir, "clientca.crt"), ccert, 0700); err != nil {
+		t.Fatalf("ioutil.WriteFile() should not error for clientca.crt, but received: %s", err)
+	}
+
+	if err := ioutil.WriteFile(filepath.Join(tmpDir, "client.key"), ckey, 0700); err != nil {
+		t.Fatalf("ioutil.WriteFile() should not error for client.key, but received: %s", err)
+	}
+
+	scert, skey, err := serverCertInfo.Generate()
+	if err != nil {
+		t.Fatalf("serverCertInfo.Generate() should not error, but received: %s", err)
+	}
+
+	if err := ioutil.WriteFile(filepath.Join(tmpDir, "server.crt"), scert, 0700); err != nil {
+		t.Fatalf("ioutil.WriteFile() should not error for server.crt, but received: %s", err)
+	}
+
+	if err := ioutil.WriteFile(filepath.Join(tmpDir, "serverca.crt"), scert, 0700); err != nil {
+		t.Fatalf("ioutil.WriteFile() should not error for serverca.crt, but received: %s", err)
+	}
+
+	if err := ioutil.WriteFile(filepath.Join(tmpDir, "server.key"), skey, 0700); err != nil {
+		t.Fatalf("ioutil.WriteFile() should not error for server.key, but received: %s", err)
+	}
+
+	t.Run("Given a TLSConfigurator", func(t *testing.T) {
+		t.Run("which is configured for a Client with two CaCerts", func(t *testing.T) {
 			// Setup client
-			config := &TLSConfigurator{
-				Assets:  AssetsTest,
-				CaCerts: []string{"serverca.crt", "clientca.crt"},
-				Cert:    "client.crt",
-				Key:     "client.key",
+			config, err := NewFromFS(http.Dir(tmpDir), "client.crt", "client.key", "serverca.crt", "clientca.crt")
+			if err != nil {
+				t.Fatalf("NewFromFS() wantErr = nil, got %v", err)
 			}
 
-			tlsConfig, err := config.TLSClientConfig()
+			tlsConfig := config.TLSClientConfig()
+			if tlsConfig.Certificates == nil {
+				t.Error("tlsConfig.Certificates should not be nil")
+			}
 
-			c.Convey("err should be nil", func() {
-				c.So(err, c.ShouldBeNil)
-			})
+			if tlsConfig.RootCAs == nil {
+				t.Fatal("tlsConfig.RootCAs should not be nil")
+			}
 
-			c.Convey("tlsConfig.RootCAs should not be nil", func() {
-				c.So(tlsConfig.RootCAs, c.ShouldNotBeNil)
-			})
-
-			c.Convey("tlsConfig.Certificates should not be nil", func() {
-				c.So(tlsConfig.Certificates, c.ShouldNotBeNil)
-			})
-
-			c.Convey("tlsConfig.RootCAs count should be 2", func() {
-				c.So(len(tlsConfig.RootCAs.Subjects()), c.ShouldEqual, 2)
-			})
+			if cnt := len(tlsConfig.RootCAs.Subjects()); cnt != 2 {
+				t.Errorf("expected 2 RootCAs, got %d", cnt)
+			}
 		})
 
-		c.Convey("which is configured for a Server with single CaCert", func() {
-
+		t.Run("which is configured for a Server with single CaCert", func(t *testing.T) {
 			// Setup server
-			config := &TLSConfigurator{
-				Assets:  AssetsTest,
-				CaCerts: []string{"clientca.crt"},
-				Cert:    "server.crt",
-				Key:     "server.key",
+			config, err := NewFromFile(filepath.Join(tmpDir, "server.crt"), filepath.Join(tmpDir, "server.key"), filepath.Join(tmpDir, "clientca.crt"))
+			if err != nil {
+				t.Fatalf("NewFromFile() wantErr = nil, got %v", err)
 			}
 
-			tlsConfig, err := config.TLSServerConfig()
+			tlsConfig := config.TLSServerConfig()
+			if tlsConfig.Certificates == nil {
+				t.Error("tlsConfig.Certificates should not be nil")
+			}
 
-			c.Convey("err should be nil", func() {
-				c.So(err, c.ShouldBeNil)
-			})
+			if tlsConfig.ClientAuth != tls.RequireAndVerifyClientCert {
+				t.Errorf("expected tlsConfig.ClientAuth = %v, got %v", tlsConfig.ClientAuth, tls.RequireAndVerifyClientCert)
+			}
 
-			c.Convey("tlsConfig.ClientAuth should be set to tls.RequireAndVerifyClientCert", func() {
-				c.So(tlsConfig.ClientAuth, c.ShouldEqual, tls.RequireAndVerifyClientCert)
-			})
+			if tlsConfig.ClientCAs == nil {
+				t.Fatal("tlsConfig.ClientCAs should not be nil")
+			}
 
-			c.Convey("tlsConfig.Certificates should not be nil", func() {
-				c.So(tlsConfig.Certificates, c.ShouldNotBeNil)
-			})
-
-			c.Convey("tlsConfig.ClientCAs count should be 1", func() {
-				c.So(len(tlsConfig.ClientCAs.Subjects()), c.ShouldEqual, 1)
-			})
+			if cnt := len(tlsConfig.ClientCAs.Subjects()); cnt != 1 {
+				t.Errorf("expected 1 ClientCAs, got %d", cnt)
+			}
 		})
 
-		c.Convey("which is configured for a Server with a missing cert", func() {
-
+		t.Run("which is configured for a Server with no CaCert", func(t *testing.T) {
 			// Setup server
-			config := &TLSConfigurator{
-				Assets:  AssetsTest,
-				CaCerts: []string{"clientca.crt"},
-				Cert:    "missing",
-				Key:     "server.key",
+			config, err := NewFromFile(filepath.Join(tmpDir, "server.crt"), filepath.Join(tmpDir, "server.key"))
+			if err != nil {
+				t.Fatalf("NewFromFile() wantErr = nil, got %v", err)
 			}
 
-			tlsConfig, err := config.TLSServerConfig()
+			tlsConfig := config.TLSServerConfig()
+			if tlsConfig.Certificates == nil {
+				t.Error("tlsConfig.Certificates should not be nil")
+			}
 
-			c.Convey("err should not be nil", c.FailureHalts, func() {
-				c.So(err, c.ShouldNotBeNil)
+			if tlsConfig.ClientAuth != tls.RequireAndVerifyClientCert {
+				t.Errorf("expected tlsConfig.ClientAuth = %v, got %v", tlsConfig.ClientAuth, tls.RequireAndVerifyClientCert)
+			}
 
-				c.Convey("err should contain 'file does not exist'", func() {
-					c.So(err.Error(), c.ShouldContainSubstring, "file does not exist")
-				})
-			})
-
-			c.Convey("tlsConfig should be nil", func() {
-				c.So(tlsConfig, c.ShouldBeNil)
-			})
+			if tlsConfig.ClientCAs != nil {
+				t.Errorf("tlsConfig.ClientCAs should be nil")
+			}
 		})
 
-		c.Convey("which is configured for a Server with a missing key", func() {
-
+		t.Run("which is configured for a Server with a missing cert", func(t *testing.T) {
 			// Setup server
-			config := &TLSConfigurator{
-				Assets:  AssetsTest,
-				CaCerts: []string{"clientca.crt"},
-				Cert:    "server.crt",
-				Key:     "missing",
-			}
+			config, err := NewFromFS(http.Dir(tmpDir), "missing", "server.key", "clientca.crt")
 
-			tlsConfig, err := config.TLSServerConfig()
+			t.Run("NewFromFS() should error", func(t *testing.T) {
+				if err == nil {
+					t.Fatal("NewFromFS() wantErr != nil, got nil")
+				}
 
-			c.Convey("err should not be nil", c.FailureHalts, func() {
-				c.So(err, c.ShouldNotBeNil)
-
-				c.Convey("err should contain 'file does not exist'", func() {
-					c.So(err.Error(), c.ShouldContainSubstring, "file does not exist")
-				})
+				if !strings.Contains(err.Error(), "no such file or directory") {
+					t.Errorf("err.Error() should contain %q, got %v", "no such file or directory", err)
+				}
 			})
 
-			c.Convey("tlsConfig should be nil", func() {
-				c.So(tlsConfig, c.ShouldBeNil)
+			t.Run("config should be nil", func(t *testing.T) {
+				if config != nil {
+					t.Error("config != nil, expected nil")
+				}
 			})
 		})
 
-		c.Convey("which is configured for a Server with a missing caCert", func() {
-
+		t.Run("which is configured for a Server with a missing key", func(t *testing.T) {
 			// Setup server
-			config := &TLSConfigurator{
-				Assets:  AssetsTest,
-				CaCerts: []string{"missing"},
-				Cert:    "server.crt",
-				Key:     "server.key",
-			}
+			config, err := NewFromFS(http.Dir(tmpDir), "server.crt", "missing", "clientca.crt")
 
-			tlsConfig, err := config.TLSServerConfig()
+			t.Run("NewFromFS() should error", func(t *testing.T) {
+				if err == nil {
+					t.Fatal("NewFromFS() wantErr != nil, got nil")
+				}
 
-			c.Convey("err should not be nil", c.FailureHalts, func() {
-				c.So(err, c.ShouldNotBeNil)
-
-				c.Convey("err should contain 'file does not exist'", func() {
-					c.So(err.Error(), c.ShouldContainSubstring, "file does not exist")
-				})
+				if !strings.Contains(err.Error(), "no such file or directory") {
+					t.Errorf("err.Error() should contain %q, got %v", "no such file or directory", err)
+				}
 			})
 
-			c.Convey("tlsConfig should be nil", func() {
-				c.So(tlsConfig, c.ShouldBeNil)
+			t.Run("config should be nil", func(t *testing.T) {
+				if config != nil {
+					t.Error("config != nil, expected nil")
+				}
 			})
 		})
 
-		c.Convey("which is configured for a Client with a missing key", func() {
+		t.Run("which is configured for a Server with a missing caCert", func(t *testing.T) {
+			// Setup server
+			config, err := NewFromFS(http.Dir(tmpDir), "server.crt", "server.key", "missing")
 
+			t.Run("NewFromFS() should error", func(t *testing.T) {
+				if err == nil {
+					t.Fatal("NewFromFS() wantErr != nil, got nil")
+				}
+
+				if !strings.Contains(err.Error(), "no such file or directory") {
+					t.Errorf("err.Error() should contain %q, got %v", "no such file or directory", err)
+				}
+			})
+
+			t.Run("config should be nil", func(t *testing.T) {
+				if config != nil {
+					t.Error("config != nil, expected nil")
+				}
+			})
+		})
+
+		t.Run("which is configured for a Client with a missing key", func(t *testing.T) {
 			// Setup client
-			config := &TLSConfigurator{
-				Assets:  AssetsTest,
-				CaCerts: []string{"serverca.crt"},
-				Cert:    "client.crt",
-				Key:     "missing",
-			}
+			config, err := NewFromFS(http.Dir(tmpDir), "client.crt", "missing", "serverca.crt")
 
-			tlsConfig, err := config.TLSClientConfig()
+			t.Run("NewFromFS() should error", func(t *testing.T) {
+				if err == nil {
+					t.Fatal("NewFromFS() wantErr != nil, got nil")
+				}
 
-			c.Convey("err should not be nil", c.FailureHalts, func() {
-				c.So(err, c.ShouldNotBeNil)
-
-				c.Convey("err should contain 'file does not exist'", func() {
-					c.So(err.Error(), c.ShouldContainSubstring, "file does not exist")
-				})
+				if !strings.Contains(err.Error(), "no such file or directory") {
+					t.Errorf("err.Error() should contain %q, got %v", "no such file or directory", err)
+				}
 			})
 
-			c.Convey("tlsConfig should be nil", func() {
-				c.So(tlsConfig, c.ShouldBeNil)
+			t.Run("config should be nil", func(t *testing.T) {
+				if config != nil {
+					t.Error("config != nil, expected nil")
+				}
 			})
 		})
 
-		c.Convey("which is configured for a Client with a missing caCert", func() {
-
+		t.Run("which is configured for a Client with a missing caCert", func(t *testing.T) {
 			// Setup client
-			config := &TLSConfigurator{
-				Assets:  AssetsTest,
-				CaCerts: []string{"missing"},
-				Cert:    "client.crt",
-				Key:     "client.key",
-			}
+			config, err := NewFromFS(http.Dir(tmpDir), "client.crt", "client.key", "missing")
 
-			tlsConfig, err := config.TLSClientConfig()
+			t.Run("NewFromFS() should error", func(t *testing.T) {
+				if err == nil {
+					t.Fatal("NewFromFS() wantErr != nil, got nil")
+				}
 
-			c.Convey("err should not be nil", c.FailureHalts, func() {
-				c.So(err, c.ShouldNotBeNil)
-
-				c.Convey("err should contain 'file does not exist'", func() {
-					c.So(err.Error(), c.ShouldContainSubstring, "file does not exist")
-				})
+				if !strings.Contains(err.Error(), "no such file or directory") {
+					t.Errorf("err.Error() should contain %q, got %v", "no such file or directory", err)
+				}
 			})
 
-			c.Convey("tlsConfig should be nil", func() {
-				c.So(tlsConfig, c.ShouldBeNil)
+			t.Run("config should be nil", func(t *testing.T) {
+				if config != nil {
+					t.Error("config != nil, expected nil")
+				}
 			})
 		})
 	})
 
-	c.Convey("Given a TLSConfigurator for both a Server and Client", t, func() {
-
+	t.Run("Given a TLSConfigurator for both a Server and Client", func(t *testing.T) {
 		// Setup Client
-		clientConfig := &TLSConfigurator{
-			Assets:  AssetsTest,
-			CaCerts: []string{"serverca.crt"},
-			Cert:    "client.crt",
-			Key:     "client.key",
+		clientConfig, err := NewFromFS(http.Dir(tmpDir), "client.crt", "client.key", "serverca.crt")
+		if err != nil {
+			t.Fatalf("client NewFromFS() wantErr = nil, got %v", err)
 		}
 
 		// Setup Server
-		serverConfig := &TLSConfigurator{
-			Assets:  AssetsTest,
-			CaCerts: []string{"clientca.crt"},
-			Cert:    "server.crt",
-			Key:     "server.key",
+		serverConfig, err := NewFromFS(http.Dir(tmpDir), "server.crt", "server.key", "clientca.crt")
+		if err != nil {
+			t.Fatalf("server NewFromFS() wantErr = nil, got %v", err)
 		}
 
-		c.Convey("We can setup an secure tcp server and client", c.FailureHalts, func() {
-
+		t.Run("We can setup an secure tcp server and client", func(t *testing.T) {
 			// Setup Server
 			ln, err := net.Listen("tcp", "localhost:0")
-			c.So(err, c.ShouldBeNil)
+			if err != nil {
+				t.Fatalf("net.Listen() wantErr = nil, got %v", err)
+			}
 
-			tlsLn, err := serverConfig.TLSListener(ln)
-			c.So(err, c.ShouldBeNil)
+			tlsLn := serverConfig.TLSListener(ln)
 
 			go func() {
 				conn, _ := tlsLn.Accept()
@@ -232,41 +274,49 @@ func TestConfigurator(t *testing.T) {
 			}()
 
 			// Setup Client
-			tlsClientConfig, err := clientConfig.TLSClientConfig()
-			c.So(err, c.ShouldBeNil)
+			tlsClientConfig := clientConfig.TLSClientConfig()
 
-			c.Convey("The client can connect to the server", func() {
-
+			t.Run("The client can connect to the server", func(t *testing.T) {
 				client, err := tls.Dial("tcp", ln.Addr().String(), tlsClientConfig)
-				c.So(err, c.ShouldBeNil)
+				if err != nil {
+					t.Fatalf("tls.Dial() wantErr = nil, got %v", err)
+				}
 
-				c.Convey("And comunicate", func() {
-
+				t.Run("And comunicate", func(t *testing.T) {
 					go func() {
 						client.Write([]byte("Hello"))
 					}()
 
 					msg := make([]byte, 5)
 					n, err := client.Read(msg)
-					c.So(err, c.ShouldBeNil)
+					if err != nil {
+						t.Fatalf("client.Read() wantErr = nil, got %v", err)
+					}
 
 					err = client.Close()
-					c.So(err, c.ShouldBeNil)
+					if err != nil {
+						t.Errorf("client.Close() wantErr = nil, got %v", err)
+					}
 
-					c.So(n, c.ShouldEqual, 5)
-					c.So(string(msg), c.ShouldEqual, "Hello")
+					if n != 5 {
+						t.Errorf("expected to read 5 bytes, got %d", n)
+					}
+
+					if string(msg) != "Hello" {
+						t.Errorf("expected %q, got %q", "Hello", msg)
+					}
 				})
 			})
 		})
 
-		c.Convey("We can setup an secure http client/server", c.FailureHalts, func() {
-
+		t.Run("We can setup an secure http client/server", func(t *testing.T) {
 			// Setup Server
 			ln, err := net.Listen("tcp", "localhost:0")
-			c.So(err, c.ShouldBeNil)
+			if err != nil {
+				t.Fatalf("net.Listen() wantErr = nil, got %v", err)
+			}
 
-			tlsLn, err := serverConfig.TLSListener(ln)
-			c.So(err, c.ShouldBeNil)
+			tlsLn := serverConfig.TLSListener(ln)
 
 			http.HandleFunc("/", echoHandler)
 
@@ -274,30 +324,40 @@ func TestConfigurator(t *testing.T) {
 				http.Serve(tlsLn, nil)
 			}()
 
-			c.Convey("The client can communicate with the server", func() {
-
+			t.Run("The client can communicate with the server", func(t *testing.T) {
 				request, err := http.NewRequest("Post", "https://"+ln.Addr().String(), strings.NewReader("Hello"))
-				c.So(err, c.ShouldBeNil)
+				if err != nil {
+					t.Fatalf("http.NewRequest() wantErr = nil, got %v", err)
+				}
 
-				client, err := clientConfig.HTTPSClient()
-				c.So(err, c.ShouldBeNil)
+				client := clientConfig.HTTPSClient()
 
 				r, err := client.Do(request)
-				c.So(err, c.ShouldBeNil)
+				if err != nil {
+					t.Fatalf("client.Do() wantErr = nil, got %v", err)
+				}
 
 				msg := make([]byte, 5)
 				n, err := r.Body.Read(msg)
-				c.So(err, c.ShouldEqual, io.EOF)
+				if err != io.EOF {
+					t.Errorf("Body.Close() wantErr = %v, got %v", io.EOF, err)
+				}
 
 				err = r.Body.Close()
-				c.So(err, c.ShouldBeNil)
+				if err != nil {
+					t.Errorf("Body.Close() wantErr = nil, got %v", err)
+				}
 
-				c.So(n, c.ShouldEqual, 5)
-				c.So(string(msg), c.ShouldEqual, "Hello")
+				if n != 5 {
+					t.Errorf("expected to read 5 bytes, got %d", n)
+				}
+
+				if string(msg) != "Hello" {
+					t.Errorf("expected %q, got %q", "Hello", msg)
+				}
 			})
 		})
 	})
-
 }
 
 func echoHandler(w http.ResponseWriter, r *http.Request) {
@@ -305,39 +365,28 @@ func echoHandler(w http.ResponseWriter, r *http.Request) {
 	r.Body.Close()
 }
 
-// We can test that the tcpKeepAliveListener returns a good connection, but there is
-// no API availible test what the keepalive and deepalivepreiod have been set to. So
-// we do the best that we can.
-func TestTCPKeepAliveListener(t *testing.T) {
+func Test_beforeGo114(t *testing.T) {
+	type args struct {
+		ver string
+	}
 
-	c.Convey("Given a TCPListener wrapped in a tcpKeepAliveListener", t, func() {
+	tests := []struct {
+		name string
+		args args
+		want bool
+	}{
+		{name: "Go1.14.1", args: args{"go1.14.1"}, want: false},
+		{name: "Go1.14", args: args{"go1.14"}, want: false},
+		{name: "Go1.13", args: args{"go1.13"}, want: true},
+		{name: "Go1.13.12", args: args{"go1.13.12"}, want: true},
+	}
 
-		ln, _ := net.Listen("tcp", "127.0.0.1:0")
-		kaln := &tcpKeepAliveListener{ln.(*net.TCPListener)}
-
-		go func() {
-			c, _ := net.Dial("tcp", ln.Addr().String())
-			c.Write([]byte("Hello"))
-			c.Close()
-		}()
-
-		c.Convey("Accepted connections should not have error", c.FailureHalts, func() {
-			conn, err := kaln.Accept()
-
-			c.So(err, c.ShouldBeNil)
-
-			c.Convey("should recieve without error", func() {
-				v := make([]byte, 5)
-				n, err := conn.Read(v)
-
-				c.So(err, c.ShouldBeNil)
-				c.So(n, c.ShouldEqual, 5)
-				c.So(string(v), c.ShouldEqual, "Hello")
-			})
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			if got := beforeGo114(tt.args.ver); got != tt.want {
+				t.Errorf("beforeGo114() = %v, want %v", got, tt.want)
+			}
 		})
-
-		c.Reset(func() {
-			ln.Close()
-		})
-	})
+	}
 }

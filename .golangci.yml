@@ -1,0 +1,39 @@
+linters:
+  enable:
+    - prealloc
+  disable:
+    - maligned
+    - gomnd
+  presets:
+    - bugs
+    - unused
+    - complexity
+    - format
+    - style
+    - unused
+issues:
+  exclude-rules:
+    # Exclude some linters from running on tests files.
+    - path: _test\.go
+      linters:
+        - funlen
+        - errcheck
+        - lll
+        - gocognit
+        - gocyclo
+
+    - linters:
+        - godox
+      text: TODO
+
+    - linters:
+        - errcheck
+      text: buf.ReadRune|SetKeepAlive
+
+    - linters:
+        - funlen
+      text: collectInformation|generateCertificate
+
+    - linters:
+        - staticcheck
+      text: BuildNameToCertificate

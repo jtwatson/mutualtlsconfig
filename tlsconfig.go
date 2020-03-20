@@ -10,148 +10,149 @@ import (
 	"io/ioutil"
 	"net"
 	"net/http"
-	"time"
+	"path/filepath"
+	"runtime"
+	"strings"
+
+	"github.com/hashicorp/go-version"
 )
 
 // TLSConfigurator is a utility to simplify setting up a Client/Server
 // using TLS Mutual athentication. The tls.Config's returned will
 // validate certificates for both the Client and Server.
 type TLSConfigurator struct {
-	Assets  http.FileSystem
-	CaCerts []string
-	Cert    string
-	Key     string
+	clientCerts []tls.Certificate
+	caCerts     [][]byte
+}
+
+// New returns a TLSConfigurator
+func New(cert, key []byte, caCerts ...[]byte) (*TLSConfigurator, error) {
+	clientCert, err := tls.X509KeyPair(cert, key)
+	if err != nil {
+		return nil, err
+	}
+
+	return &TLSConfigurator{
+		clientCerts: []tls.Certificate{clientCert},
+		caCerts:     caCerts,
+	}, nil
+}
+
+// NewFromFile loads from files and returns a TLSConfigurator.
+func NewFromFile(cert, key string, caCerts ...string) (*TLSConfigurator, error) {
+	return NewFromFS(nil, cert, key, caCerts...)
+}
+
+// NewFromFS loads from fs and returns a TLSConfigurator.
+func NewFromFS(fs http.FileSystem, cert, key string, caCerts ...string) (*TLSConfigurator, error) {
+	certPEM, err := loadBytes(fs, cert)
+	if err != nil {
+		return nil, err
+	}
+
+	keyPEM, err := loadBytes(fs, key)
+	if err != nil {
+		return nil, err
+	}
+
+	caCertSlice := make([][]byte, 0, len(caCerts))
+
+	for _, cert := range caCerts {
+		certPEM, err := loadBytes(fs, cert)
+		if err != nil {
+			return nil, err
+		}
+
+		caCertSlice = append(caCertSlice, certPEM)
+	}
+
+	return New(certPEM, keyPEM, caCertSlice...)
 }
 
 // TLSClientConfig returns a tls.Config which will fully validate the
 // server certificate using the provided CaCerts.
-func (c *TLSConfigurator) TLSClientConfig() (*tls.Config, error) {
-
-	caCertPool, err := c.loadServerCertPool()
-	if err != nil {
-		return nil, err
-	}
-
-	clientCert, err := c.loadCert()
-	if err != nil {
-		return nil, err
-	}
-
+func (c *TLSConfigurator) TLSClientConfig() *tls.Config {
 	// Setup client
 	tlsConfig := &tls.Config{
-		RootCAs:      caCertPool,
-		Certificates: []tls.Certificate{clientCert},
+		RootCAs:      c.loadServerCertPool(),
+		Certificates: c.clientCerts,
 	}
-	tlsConfig.BuildNameToCertificate()
 
-	return tlsConfig, nil
+	if beforeGo114(runtime.Version()) {
+		tlsConfig.BuildNameToCertificate()
+	}
+
+	return tlsConfig
 }
 
 // TLSServerConfig returns a tls.Config which will require and fully
 // validate a client certificate using the provided CaCerts with
 // option tls.RequireAndVerifyClientCert. The client
 // certificate must have x509.ExtKeyUsageClientAuth set.
-func (c *TLSConfigurator) TLSServerConfig() (*tls.Config, error) {
-
-	caCertPool, err := c.loadServerCertPool()
-	if err != nil {
-		return nil, err
-	}
-
-	clientCert, err := c.loadCert()
-	if err != nil {
-		return nil, err
-	}
-
+func (c *TLSConfigurator) TLSServerConfig() *tls.Config {
 	// Setup server
 	tlsConfig := &tls.Config{
-		ClientCAs:    caCertPool,
-		Certificates: []tls.Certificate{clientCert},
+		ClientCAs:    c.loadServerCertPool(),
+		Certificates: c.clientCerts,
 		ClientAuth:   tls.RequireAndVerifyClientCert,
 		NextProtos:   []string{"http/1.1"},
 	}
-	tlsConfig.BuildNameToCertificate()
 
-	return tlsConfig, nil
+	if beforeGo114(runtime.Version()) {
+		tlsConfig.BuildNameToCertificate()
+	}
+
+	return tlsConfig
 }
 
 // TLSListener wraps the TLSServerConfig around the net.Listener
-func (c *TLSConfigurator) TLSListener(ln net.Listener) (net.Listener, error) {
-	tlsConfig, err := c.TLSServerConfig()
-	if err != nil {
-		return nil, err
-	}
-
-	// Wrap in a listener that sets the keep-alive
-	kaln := tcpKeepAliveListener{ln.(*net.TCPListener)}
-
-	// Wrap in a TLS listener
-	tlsListener := tls.NewListener(kaln, tlsConfig)
-
-	return tlsListener, nil
+func (c *TLSConfigurator) TLSListener(ln net.Listener) net.Listener {
+	return tls.NewListener(ln, c.TLSServerConfig())
 }
 
 // HTTPSClient returns a http.Client with its Transport configured for TLS.
-func (c *TLSConfigurator) HTTPSClient() (*http.Client, error) {
-	tlsConfig, err := c.TLSClientConfig()
-	if err != nil {
-		return nil, err
-	}
-	transport := &http.Transport{TLSClientConfig: tlsConfig}
-	return &http.Client{Transport: transport}, nil
+func (c *TLSConfigurator) HTTPSClient() *http.Client {
+	return &http.Client{Transport: &http.Transport{TLSClientConfig: c.TLSClientConfig()}}
 }
 
-func (c *TLSConfigurator) loadCert() (tls.Certificate, error) {
-	clientCertPEM, err := c.loadBytes(c.Cert)
-	if err != nil {
-		return tls.Certificate{}, err
+func (c *TLSConfigurator) loadServerCertPool() *x509.CertPool {
+	if len(c.caCerts) == 0 {
+		return nil
 	}
 
-	clientKeyPEM, err := c.loadBytes(c.Key)
-	if err != nil {
-		return tls.Certificate{}, err
-	}
-
-	return tls.X509KeyPair(clientCertPEM, clientKeyPEM)
-}
-
-func (c *TLSConfigurator) loadServerCertPool() (*x509.CertPool, error) {
-	if len(c.CaCerts) == 0 {
-		return nil, nil
-	}
 	certPool := x509.NewCertPool()
 
-	for _, cert := range c.CaCerts {
-		certPEM, err := c.loadBytes(cert)
-		if err != nil {
-			return nil, err
-		}
-		certPool.AppendCertsFromPEM(certPEM)
+	for _, cert := range c.caCerts {
+		certPool.AppendCertsFromPEM(cert)
 	}
-	return certPool, nil
+
+	return certPool
 }
 
-func (c *TLSConfigurator) loadBytes(cert string) ([]byte, error) {
-	file, err := c.Assets.Open(cert)
+func loadBytes(fs http.FileSystem, cert string) ([]byte, error) {
+	if fs == nil {
+		fs = http.Dir(filepath.Dir(cert))
+		cert = filepath.Base(cert)
+	}
+
+	file, err := fs.Open(cert)
 	if err != nil {
 		return nil, err
 	}
+
 	return ioutil.ReadAll(file)
 }
 
-// tcpKeepAliveListener sets TCP keep-alive timeouts on accepted
-// connections. It's used by TLSListener so dead TCP connections
-// (e.g. closing laptop mid-download) eventually go away.
-type tcpKeepAliveListener struct {
-	*net.TCPListener
-}
-
-func (ln tcpKeepAliveListener) Accept() (c net.Conn, err error) {
-	tc, err := ln.AcceptTCP()
+func beforeGo114(ver string) bool {
+	minversion, err := version.NewVersion("1.14")
 	if err != nil {
-		return
+		return true
 	}
-	tc.SetKeepAlive(true)
-	tc.SetKeepAlivePeriod(3 * time.Minute)
-	return tc, nil
+
+	curversion, err := version.NewVersion(strings.TrimPrefix(ver, "go"))
+	if err != nil {
+		return true
+	}
+
+	return curversion.LessThan(minversion)
 }
